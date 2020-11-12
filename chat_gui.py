@@ -175,7 +175,9 @@ class ChatGui:
         now = time.time()
         if receiver in self.typing_timestamps:
             last_timestamp = self.typing_timestamps[receiver]
-            if now - last_timestamp < self.typing_timeout_seconds:
+            if (last_timestamp is not None) and (
+                now - last_timestamp < self.typing_timeout_seconds
+            ):
                 return
         self.typing_timestamps[receiver] = now
         # call typing callback
