@@ -4,8 +4,8 @@ import uuid
 import time
 
 
-SEND_STATUS_READ = "read"
-SEND_STATUS_DELIVERED = "delivered"
+SEND_RECEIPT_READ = "read"
+SEND_RECEIPT_DELIVERED = "delivered"
 
 RECEIVE_STATUS_READ = "read"
 
@@ -65,7 +65,7 @@ class History:
 
     def set_message_status(self, message_uuid, status):
         if message_uuid in self.messages_by_uuid:
-            self.messages_by_uuid[message_uuid].set_status(status)
+            self.messages_by_uuid[message_uuid].set_send_status(status)
 
     def _get_rows(self):
         return [[message._get_string()] for message in self.messages]
@@ -153,13 +153,13 @@ class ChatGui:
     def receipt_read(self, sender, message_uuid):
         history = self.data.get_history_by_contact(sender)
         if history:
-            history.set_send_status(message_uuid, SEND_RECEIPT_READ)
+            history.set_message_status(message_uuid, SEND_RECEIPT_READ)
             self.changed = True
 
     def receipt_delivered(self, sender, message_uuid):
         history = self.data.get_history_by_contact(sender)
         if history:
-            history.set_send_status(message_uuid, SEND_RECEIPT_DELIVERED)
+            history.set_message_status(message_uuid, SEND_RECEIPT_DELIVERED)
             self.changed = True
 
     def call_list(self, sender, data):
