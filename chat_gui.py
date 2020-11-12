@@ -11,11 +11,18 @@ RECEIVE_STATUS_READ = "read"
 
 
 class Message:
-    def __init__(self, sender, receiver, message, uuid, sent_by_me):
+    def __init__(
+        self,
+        sender: str,
+        receiver: str,
+        message: str,
+        message_uuid: str,
+        sent_by_me: bool,
+    ):
         self.sender = sender
         self.message = message
         self.receiver = receiver
-        self.uuid = uuid
+        self.uuid = message_uuid
         self.send_status = None
         self.receive_status = None
         self.sent_by_me = sent_by_me
@@ -42,7 +49,7 @@ class Message:
 
     @staticmethod
     def create_message(sender, receiver, message):
-        return Message(sender, receiver, message, uuid.uuid4(), True)
+        return Message(sender, receiver, message, uuid.uuid4().hex, True)
 
 
 class History:
@@ -56,9 +63,9 @@ class History:
         self.messages.append(message)
         self.messages_by_uuid[message.uuid] = message
 
-    def set_message_status(self, uuid, status):
-        if uuid in self.messages_by_uuid:
-            self.messages_by_uuid[uuid].set_status(status)
+    def set_message_status(self, message_uuid, status):
+        if message_uuid in self.messages_by_uuid:
+            self.messages_by_uuid[message_uuid].set_status(status)
 
     def _get_rows(self):
         return [[message._get_string()] for message in self.messages]
@@ -121,10 +128,12 @@ class ChatGui:
         self.on_read = on_read
         self.typing_timeout_seconds = typing_timeout_seconds
 
-    def receive(self, sender, message, uuid):
+    def receive(self, sender, message, message_uuid):
         history = self.data.get_history_by_contact(sender)
         if history:
-            history.add_message(Message(sender, self.data.myself, message, uuid, False))
+            history.add_message(
+                Message(sender, self.data.myself, message, message_uuid, False)
+            )
             self.changed = True
 
     def send(self, receiver, message):
@@ -133,7 +142,7 @@ class ChatGui:
         if history:
             history.add_message(message)
             # forward to callback
-            self.on_send(self.data.myself, receiver, message.message, uuid)
+            self.on_send(self.data.myself, receiver, message.message, message.uuid)
 
     def typing(self, sender):
         history = self.data.get_history_by_contact(sender)
@@ -189,7 +198,6 @@ class ChatGui:
             clear_table("Table##Messages")
             index = get_value("##list")
             history = self.data.get_history(index)
-            print("Changed")
             for message_uuid in history.mark_as_read():
                 self.on_read(self.data.myself, history.contact, message_uuid)
             if history.is_typing():
