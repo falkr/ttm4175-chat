@@ -1,5 +1,5 @@
-from dearpygui.core import *
-from dearpygui.simple import *
+from typing import Any, Callable, Dict, List, Optional, Sequence
+import dearpygui.dearpygui as dpg
 import uuid
 import time
 
@@ -8,6 +8,31 @@ SEND_RECEIPT_READ = "read"
 SEND_RECEIPT_DELIVERED = "delivered"
 
 RECEIVE_STATUS_READ = "read"
+
+PRIMARY_WINDOW = "main"
+STATUS_LABEL = "status_label"
+MY_NAME_LABEL = "my_name_label"
+MESSAGE_INPUT = "message_input"
+CONTACT_LIST = "contact_list"
+
+MESSAGE_GROUP = "MESSAGE_GROUP"
+
+COLOR_MESSAGE_ME = (0, 150, 255)
+COLOR_MESSAGE_OTHERS = (255, 255, 255)
+
+COLOR_ACCENT = (0, 150, 255)
+
+MESSAGE_INDENT = 100
+
+MAIN_WINDOW_WIDTH = 600
+MAIN_WINDOW_HEIGHT = 500
+CONTACT_LIST_WIDTH = 150
+MESSAGE_INPUT_HEIGHT = 80
+MESSAGE_WINDOW_HEIGHT = MAIN_WINDOW_HEIGHT - MESSAGE_INPUT_HEIGHT - 60
+
+
+def get_team_prefix(label: str) -> str:
+    return label.split("(")[0]
 
 
 class Message:
@@ -27,87 +52,103 @@ class Message:
         self.receive_status = None
         self.sent_by_me = sent_by_me
 
-    def _get_string(self):
-        if self.send_status:
+    def as_string(self) -> str:
+        if self.send_status is not None:
             return (
                 self.sender + ":\n  " + self.message + "\n (" + self.send_status + ")"
             )
         else:
             return self.sender + ":\n  " + self.message
 
-    def set_send_status(self, send_status):
+    def set_send_status(self, send_status: str):
         self.send_status = send_status
 
-    def is_sent_by_me(self):
+    def is_sent_by_me(self) -> bool:
         return self.sent_by_me
 
-    def is_read(self):
+    def is_read(self) -> bool:
         return self.receive_status == RECEIVE_STATUS_READ
 
     def mark_as_read(self):
         self.receive_status = RECEIVE_STATUS_READ
 
     @staticmethod
-    def create_message(sender, receiver, message):
+    def create_message(sender: str, receiver: str, message: str):
         return Message(sender, receiver, message, uuid.uuid4().hex, True)
 
 
 class History:
-    def __init__(self, contact):
-        self.contact = contact
-        self.messages = []
-        self.messages_by_uuid = {}
-        self.typing = False
+    def __init__(self, contact: str):
+        self.contact: str = contact
+        self.messages: List[Message] = []
+        self.messages_by_uuid: Dict[str, Message] = {}
+        self.typing: bool = False
+        self.unread: int = 0
 
-    def add_message(self, message):
+    def add_message(self, message: Message):
         self.messages.append(message)
         self.messages_by_uuid[message.uuid] = message
+        self.unread = self.unread + 1
 
-    def set_message_status(self, message_uuid, status):
+    def set_message_status(self, message_uuid: str, status: str):
         if message_uuid in self.messages_by_uuid:
             self.messages_by_uuid[message_uuid].set_send_status(status)
 
-    def _get_rows(self):
-        return [[message._get_string()] for message in self.messages]
+    def _get_rows(self) -> Sequence[Sequence[str]]:
+        return [[message.as_string()] for message in self.messages]
 
-    def set_typing(self, typing):
+    def set_typing(self, typing: bool):
         self.typing = typing
 
-    def is_typing(self):
+    def is_typing(self) -> bool:
         return self.typing
 
-    def mark_as_read(self):
-        receipts = []
+    def get_unread_messages(self) -> int:
+        return self.unread
+
+    def mark_as_read(self) -> Sequence[str]:
+        receipts: List[str] = []
         for message in self.messages:
             if not (message.is_sent_by_me() or message.is_read()):
                 receipts.append(message.uuid)
                 message.mark_as_read()
+        self.unread = 0
         return receipts
+
+    def __str__(self) -> str:
+        if self.unread > 0:
+            return self.contact + "(" + str(self.unread) + ")"
+        else:
+            return self.contact
 
 
 class Data:
-    def __init__(self, contacts, myself):
+    def __init__(self, contacts: Sequence[str], myself: str):
         assert myself not in contacts
         self.contacts = contacts
-        self.histories = []
-        self.history_by_contact = {}
+        self.histories: List[History] = []
+        self.history_by_contact: Dict[str, History] = {}
         self.myself = myself
         for contact in contacts:
             history = History(contact)
             self.history_by_contact[contact] = history
             self.histories.append(history)
 
-    def get_history(self, index):
-        return self.histories[index]
-
-    def get_history_by_contact(self, contact):
+    def get_history_by_contact(self, contact: str) -> Optional[History]:
         if contact in self.history_by_contact:
             return self.history_by_contact[contact]
         return None
 
 
 class ChatGui:
-    def __init__(self, myself, on_send, on_type, on_read, typing_timeout_seconds=3):
+    def __init__(
+        self,
+        myself: str,
+        on_send: Callable,
+        on_type: Callable,
+        on_read: Callable,
+        typing_timeout_seconds: int = 3,
+    ):
         contacts = (
             ["team{}a".format(i) for i in range(1, 13)]
             + ["team{}b".format(i) for i in range(1, 13)]
@@ -122,13 +163,14 @@ class ChatGui:
         contacts.remove(myself)
         self.data = Data(contacts, myself)
         self.changed = False
+        self.last_update: float = time.time()
         self.typing_timestamps = {}
         self.on_send = on_send
         self.on_type = on_type
         self.on_read = on_read
         self.typing_timeout_seconds = typing_timeout_seconds
 
-    def receive(self, sender, message, message_uuid):
+    def receive(self, sender: str, message: str, message_uuid: str):
         history = self.data.get_history_by_contact(sender)
         if history:
             history.add_message(
@@ -136,27 +178,27 @@ class ChatGui:
             )
             self.changed = True
 
-    def send(self, receiver, message):
-        message = Message.create_message(self.data.myself, receiver, message)
+    def send(self, receiver: str, message_body: str):
+        message = Message.create_message(self.data.myself, receiver, message_body)
         history = self.data.get_history_by_contact(receiver)
         if history:
             history.add_message(message)
             # forward to callback
             self.on_send(self.data.myself, receiver, message.message, message.uuid)
 
-    def typing(self, sender):
+    def typing(self, sender: str):
         history = self.data.get_history_by_contact(sender)
         if history:
-            history.set_typing(sender)
+            history.set_typing(True)
             self.changed = True
 
-    def receipt_read(self, sender, message_uuid):
+    def receipt_read(self, sender: str, message_uuid: str):
         history = self.data.get_history_by_contact(sender)
         if history:
             history.set_message_status(message_uuid, SEND_RECEIPT_READ)
             self.changed = True
 
-    def receipt_delivered(self, sender, message_uuid):
+    def receipt_delivered(self, sender: str, message_uuid: str):
         history = self.data.get_history_by_contact(sender)
         if history:
             history.set_message_status(message_uuid, SEND_RECEIPT_DELIVERED)
@@ -165,13 +207,13 @@ class ChatGui:
     def call_list(self, sender, data):
         self.changed = True
 
-    def call_send_button(self, sender_widget, data):
-        message = get_value("##mes")
-        index = get_value("##list")
-        receiver = self.data.get_history(index).contact
+    def call_send_button(self, sender: Any, app_data: Any, user_data: bool):
+        message: str = dpg.get_value(MESSAGE_INPUT)
+        receiver: str = dpg.get_value(CONTACT_LIST)
+        send_to_all: bool = user_data
         self.typing_timestamps[receiver] = None
-        set_value("##mes", "")
-        if sender_widget == "Button##SendAll":
+        dpg.set_value(MESSAGE_INPUT, "")
+        if send_to_all is True:
             for receiver in self.data.contacts:
                 self.send(receiver, message)
         else:
@@ -179,8 +221,8 @@ class ChatGui:
         self.changed = True
 
     def call_write(self, sender_widget, data):
-        index = get_value("##list")
-        receiver = self.data.get_history(index).contact
+        index = dpg.get_value(CONTACT_LIST)
+        receiver = self.data.get_history_by_contact(index).contact
         now = time.time()
         if receiver in self.typing_timestamps:
             last_timestamp = self.typing_timestamps[receiver]
@@ -192,67 +234,112 @@ class ChatGui:
         # call typing callback
         self.on_type(self.data.myself, receiver)
 
-    def main_callback(self, sender, data):
-        if self.changed:
-            self.changed = False
-            clear_table("Table##Messages")
-            index = get_value("##list")
-            history = self.data.get_history(index)
-            for message_uuid in history.mark_as_read():
-                self.on_read(self.data.myself, history.contact, message_uuid)
-            if history.is_typing():
-                set_value("Label", "{} is typing...".format(history.contact))
-                history.set_typing(False)
+    def show_history_messages(self, history: History):
+        dpg.delete_item(MESSAGE_GROUP, children_only=True)
+        width = dpg.get_item_width(MESSAGE_GROUP)
+        for message in history.messages:
+            if message.is_sent_by_me():
+                dpg.add_text(
+                    message.as_string(),
+                    parent=MESSAGE_GROUP,
+                    indent=MESSAGE_INDENT,
+                    wrap=width - MESSAGE_INDENT,
+                    color=COLOR_MESSAGE_OTHERS,
+                )
             else:
-                set_value("Label", "")
-            set_table_data("Table##Messages", history._get_rows())
+                dpg.add_text(
+                    message.as_string(),
+                    parent=MESSAGE_GROUP,
+                    indent=0,
+                    wrap=width - MESSAGE_INDENT,
+                    color=COLOR_MESSAGE_ME,
+                )
+
+    def update_table(self):
+        contact = dpg.get_value(CONTACT_LIST)
+        contact = get_team_prefix(contact)
+        history = self.data.get_history_by_contact(contact)
+        # history = dpg.get_value(CONTACT_LIST)
+        if history is None:
+            return
+        for message_uuid in history.mark_as_read():
+            self.on_read(self.data.myself, history.contact, message_uuid)
+        if history.is_typing():
+            dpg.set_value(STATUS_LABEL, "{} is typing...".format(history.contact))
+            history.set_typing(False)
+        else:
+            dpg.set_value(STATUS_LABEL, "")
+        self.show_history_messages(history)
+
+    def main_callback(self):
+        if (self.last_update + 1 < time.time()) or self.changed:
+            self.changed = False
+            self.last_update = time.time()
+            self.update_table()
+            # TODO problem: changes selection to first item
+            # dpg.set_value(CONTACT_LIST, self.data.histories)
+
+    def _show_gui(self):
+        with dpg.window(
+            tag=PRIMARY_WINDOW,
+            width=MAIN_WINDOW_WIDTH,
+            height=MAIN_WINDOW_HEIGHT,
+        ):
+            with dpg.group(horizontal=True):
+                with dpg.child_window(
+                    width=CONTACT_LIST_WIDTH, height=MAIN_WINDOW_HEIGHT
+                ):
+                    dpg.add_listbox(
+                        tag=CONTACT_LIST,
+                        items=self.data.histories,
+                        width=-1,
+                        num_items=len(self.data.contacts),
+                        callback=self.call_list,
+                    )
+                with dpg.group(horizontal=False):
+                    with dpg.group(width=-1, horizontal=True):
+                        with dpg.child_window(
+                            tag=MESSAGE_GROUP, width=-1, height=MESSAGE_WINDOW_HEIGHT
+                        ):
+                            dpg.add_text("No message yet")
+
+                    dpg.add_text(tag=STATUS_LABEL, label="", color=COLOR_ACCENT)
+                    dpg.add_input_text(
+                        default_value="",
+                        multiline=True,
+                        label="",
+                        tag=MESSAGE_INPUT,
+                        width=-1,
+                        height=MESSAGE_INPUT_HEIGHT,
+                        hint="Write...",
+                        callback=self.call_write,
+                    )
+                    with dpg.group(horizontal=True):
+                        dpg.add_button(
+                            label="Send",
+                            width=100,
+                            callback=self.call_send_button,
+                            user_data=False,
+                        )
+                        dpg.add_button(
+                            label="Send To All",
+                            width=100,
+                            callback=self.call_send_button,
+                            user_data=True,  # send all
+                        )
 
     def show(self):
-
-        with window(
-            "MQTT Message Chat",
-            width=400,
-            height=500,
-        ):
-            add_label_text("MyID", label="", color=[0, 200, 255])
-            set_value("MyID", "Me: " + self.data.myself)
-            add_listbox(
-                "##list",
-                items=self.data.contacts,
-                width=150,
-                callback=self.call_list,
-            )
-            add_same_line()
-            with group("MessagesG", horizontal=False):
-                add_table("Table##Messages", ["Messages"], width=300, height=400)
-                add_label_text("Label", label="", color=[0, 200, 255])
-                add_input_text(
-                    "##mes",
-                    default_value="",
-                    multiline=True,
-                    label="",
-                    width=300,
-                    height=80,
-                    hint="Write...",
-                    callback=self.call_write,
-                )
-                add_button(
-                    "Button##Send",
-                    label="Send",
-                    width=145,
-                    callback=self.call_send_button,
-                )
-                add_same_line()
-                add_button(
-                    "Button##SendAll",
-                    label="Send To All",
-                    width=145,
-                    callback=self.call_send_button,
-                )
-
-        set_render_callback(self.main_callback)
-        set_main_window_size(470, 550)
-        # set_theme("Light")
-        start_dearpygui(
-            primary_window="MQTT Message Chat",
+        dpg.create_context()
+        dpg.create_viewport(
+            title="MQTT Message Chat (me: " + self.data.myself + ")",
+            width=MAIN_WINDOW_WIDTH,
+            height=MAIN_WINDOW_HEIGHT,
         )
+        dpg.setup_dearpygui()
+        self._show_gui()
+        dpg.show_viewport()
+        dpg.set_primary_window(PRIMARY_WINDOW, True)
+        while dpg.is_dearpygui_running():
+            self.main_callback()
+            dpg.render_dearpygui_frame()
+        dpg.destroy_context()
